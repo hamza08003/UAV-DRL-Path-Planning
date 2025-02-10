@@ -16,11 +16,11 @@ class UAVEnvironment(gym.Env):
     def __init__(self, env_config_filepath: str) -> None:
         """
         Initialize `UAVEnvironment` with the given configuration.
-        The configuration is a dictionary loaded from JSON that contains 
-        environment parameters, uav start / target positions, and obstacles info.
+        The configuration is a JSON file that contains:
+        environmental params like uav start position / target position, obstacles info.
         
         Args:
-            env_config (Dict[str, Any]): Dictionary containing environment parameters.
+            env_config (str): JSON filepath containing environment parameters.
                 Expected keys:
                   - grid_size, start_pos, target_pos, target_radius, max_steps,
                     safe_zone_multiplier, prediction_horizon, base_reward_scale,
@@ -62,6 +62,7 @@ class UAVEnvironment(gym.Env):
         self.collision_count = 0
         self.success_count = 0
         self.total_episodes = 0
+        self.cumulative_reward = 0.0
 
         # Movement directions (8 possible movements)
         self.directions = {
@@ -78,11 +79,7 @@ class UAVEnvironment(gym.Env):
         # Gym spaces: 8 possible movement directions
         self.action_space = spaces.Discrete(8)
         self.observation_space = self._create_observation_space()
-
-        # reward scaling
-        self.reward_scale = self.config["base_reward_scale"]
-        self.cumulative_reward = 0.0
-
+        
         # init first episode
         self.reset()
 
@@ -373,7 +370,7 @@ class UAVEnvironment(gym.Env):
         # 2. Goal achievement reward
         if new_distance <= self.config["target_radius"]:
             reward += 100.0
-            return self._adaptive_reward_scaling(reward)
+            return reward
 
         # 3. Safe zone violation penalty
         safe_zone_violation = self._calculate_safe_zone_violation(self.uav_position)
@@ -396,8 +393,8 @@ class UAVEnvironment(gym.Env):
                 alignment = 0.0
             reward += 5.0 * alignment  # suggested: 8.0 to 10.0
 
-        return self._adaptive_reward_scaling(reward)
-
+        return reward
+        
 
     def _calculate_safe_zone_violation(self, position: np.ndarray) -> float:
         """
@@ -418,35 +415,6 @@ class UAVEnvironment(gym.Env):
             if safe_radius > 0 and distance < safe_radius:
                 violation += (safe_radius - distance) / safe_radius
         return min(violation, 1.0)
-
-
-    def _adaptive_reward_scaling(self, base_reward: float) -> float:
-        """
-        Scales the reward based on the recent performance of the UAV (i.e., success rate).
-
-        Args:
-            base_reward (float): The original reward value.
-
-        Returns:
-            float: The scaled reward value.
-        """
-
-        if len(self.terminal_states) > 100:
-            recent_success = np.mean([
-                1 if state == 'finish' else 0
-                for state in self.terminal_states[-100:]
-            ])
-            target_success = 0.7
-
-            error = target_success - recent_success
-            self.reward_scale += self.config["adaptive_scale_rate"] * error
-            self.reward_scale = np.clip(
-                self.reward_scale,
-                self.config["min_reward_scale"],
-                self.config["max_reward_scale"]
-            )
-
-        return base_reward * self.reward_scale
 
 
     def _is_done(self) -> bool:
